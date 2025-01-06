@@ -1,0 +1,13 @@
+apiVersion: training.redhat.com/v1alpha1
+kind: GithubIssue
+metadata:
+  labels:
+    app.kubernetes.io/name: issues-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: newestissue
+  namespace: default
+spec:
+  repository: git@github.com:zszabo-rh/issues-operator.git
+  title: Newest issue
+  description: james baxter is the gratest horse
+
