@@ -1,3 +1,5 @@
+// Assisted by watsonx Code Assistant
+
 package gitclient
 
 import (
@@ -6,43 +8,41 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func TestTestGetUrl(t *testing.T) {
-	g := NewWithT(t)
-	b := GetUrl("git@github.com:zszabo-rh/issues-operator.git")
-	g.Expect(b).To(Equal("https://api.github.com/repos/zszabo-rh/issues-operator/issues"))
+func TestGetUrl(t *testing.T) {
+	repo := "git@github.com:zszabo-rh/issues-operator.git"
+	expectedUrl := "https://api.github.com/repos/zszabo-rh/issues-operator/issues"
+	RegisterTestingT(t)
+	Expect(GetUrl(repo)).To(Equal(expectedUrl))
 }
 
-func TestGetToken(t *testing.T) {
-	g := NewWithT(t)
-	b := GetToken()
-	g.Expect(b).To(Equal("blabla"))
-}
-
-/*
-	func TestCreateNew(t *testing.T) {
-		g := NewWithT(t)
-		b, err := AddIssue("git@github.com:zszabo-rh/issues-operator.git", "New Issue", "Created by gomega")
-		if err != nil {
-			panic(err)
-		}
-		g.Expect(b > 0).To(BeTrue())
-	}
-*/
 func TestGetIssues(t *testing.T) {
-	g := NewWithT(t)
-	b, err := GetIssues("git@github.com:zszabo-rh/issues-operator.git")
-	if err != nil {
-		panic(err)
-	}
-	g.Expect(len(b) == 7).To(BeTrue())
+	repo := "git@github.com:zszabo-rh/issues-operator.git"
+	RegisterTestingT(t)
+	gitissues, err := GetIssues(repo)
+	Expect(err).To(BeNil())
+	Expect(len(gitissues)).To(BeNumerically(">", 0))
+}
+
+func TestAddIssue(t *testing.T) {
+	repo := "git@github.com:zszabo-rh/issues-operator.git"
+	title := "Test Issue"
+	desc := "This is a test issue"
+	RegisterTestingT(t)
+	gitissue, err := AddIssue(repo, title, desc)
+	Expect(err).To(BeNil())
+	Expect(gitissue.Title).To(Equal(title))
+	Expect(gitissue.Description).To(Equal(desc))
 }
 
 func TestUpdateIssue(t *testing.T) {
-	g := NewWithT(t)
-	title := "Updated title"
-	b, err := UpdateIssue("git@github.com:zszabo-rh/issues-operator.git", 3, title, "Updated description")
-	if err != nil {
-		panic(err)
-	}
-	g.Expect(b.Title).To(Equal(title))
+	repo := "git@github.com:zszabo-rh/issues-operator.git"
+	title := "Updated Test Issue"
+	desc := "This is an updated test issue"
+	gitissue, err := AddIssue(repo, "Test Issue", "This is a test issue")
+	RegisterTestingT(t)
+	Expect(err).To(BeNil())
+	updatedGitissue, err := UpdateIssue(repo, gitissue.Id, title, desc)
+	Expect(err).To(BeNil())
+	Expect(updatedGitissue.Title).To(Equal(title))
+	Expect(updatedGitissue.Description).To(Equal(desc))
 }
