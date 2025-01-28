@@ -4,10 +4,9 @@ metadata:
   labels:
     app.kubernetes.io/name: issues-operator
     app.kubernetes.io/managed-by: kustomize
-  name: singleton
+  name: newestissue
   namespace: default
 spec:
   repository: git@github.com:zszabo-rh/issues-operator.git
-  title: Should be single issue
-  description: one issue to rule them all but this time really
-
+  title: AI assisted issue
+  description: james baxter is the gratest horse

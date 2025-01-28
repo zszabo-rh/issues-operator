@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
-	"reflect"
 	"strings"
 
 	"github.com/kelseyhightower/envconfig"
 )
+
+type GitClient struct {
+	repo  string
+	token string
+}
 
 type GitIssue struct {
 	Title       string `json:"title"`
@@ -25,159 +28,139 @@ type Env struct {
 	GitToken string `required:"true" envconfig:"gittoken"`
 }
 
-func GetToken() string {
-	var s Env
-	err := envconfig.Process("", &s)
+func GetToken() (string, error) {
+	var env Env
+	err := envconfig.Process("", &env)
 	if err != nil {
-		log.Fatal(err.Error())
-		return ""
+		return "", err
 	}
-	return s.GitToken
+	return env.GitToken, nil
 }
 
-func GetUrl(repo string) string {
-	// Example repo: git@github.com:zszabo-rh/issues-operator.git
-	// Path:         zszabo-rh/issues-operator
-	// Output:       https://api.github.com/repos/zszabo-rh/issues-operator/issues
+func BuildUrl(repo string) (string, error) {
 	split1 := strings.Split(repo, ":")
+	if len(split1) != 2 {
+		return "", fmt.Errorf("invalid repo format")
+	}
 	split2 := strings.Split(split1[1], ".")
+	if len(split2) != 2 {
+		return "", fmt.Errorf("invalid repo format")
+	}
 	url := "https://api.github.com/repos/" + split2[0] + "/issues"
-	return url
+	return url, nil
 }
 
-func GetIssues(repo string) ([]GitIssue, error) {
-	client := &http.Client{}
-	req, err := http.NewRequest("GET", GetUrl(repo), nil)
-
+func NewGitClient(repo string) (*GitClient, error) {
+	httprepo, err := BuildUrl(repo)
 	if err != nil {
-		log.Fatal(err.Error())
 		return nil, err
 	}
-
-	resp, err := client.Do(req)
-
+	token, err := GetToken()
 	if err != nil {
-		log.Fatal(err.Error())
 		return nil, err
+	}
+	g := GitClient{httprepo, token}
+	return &g, nil
+}
+
+func (g *GitClient) GetIssues() ([]GitIssue, error) {
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", g.repo, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "token "+g.token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode > 299 {
+		return nil, fmt.Errorf("%v", http.StatusText(resp.StatusCode))
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatal(err.Error())
 		return nil, err
 	}
-
 	var gitissues []GitIssue
 	err = json.Unmarshal([]byte(body), &gitissues)
-	defer resp.Body.Close()
-	return gitissues, err
+	if err != nil {
+		return nil, err
+	}
+	return gitissues, nil
 }
 
-func AddIssue(repo string, title string, desc string) (GitIssue, error) {
+func (g *GitClient) AddIssue(title string, desc string) (GitIssue, error) {
 	gitissue := GitIssue{
 		Title:       title,
 		Description: desc}
 
 	gitissueJson, err := json.Marshal(gitissue)
 	if err != nil {
-		log.Fatal(err.Error())
 		return GitIssue{}, err
 	}
 
 	client := &http.Client{}
-	req, err := http.NewRequest("POST", GetUrl(repo), bytes.NewBuffer(gitissueJson))
-
+	req, err := http.NewRequest("POST", g.repo, bytes.NewBuffer(gitissueJson))
 	if err != nil {
-		log.Fatal(err.Error())
 		return GitIssue{}, err
 	}
 
 	req.Header.Add("Accept", "application/json")
-	req.Header.Add("Authorization", "Bearer "+GetToken())
+	req.Header.Add("Authorization", "Bearer "+g.token)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Fatal(err.Error())
 		return GitIssue{}, err
 	}
 	defer resp.Body.Close()
 
-	err = parseResponse(resp, &gitissue)
-	if err != nil {
-		log.Fatal(err.Error())
-		return GitIssue{}, err
-	}
-
-	return gitissue, err
-}
-
-func parseResponse(resp *http.Response, output *GitIssue) error {
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatal(err.Error())
-		return err
-	}
-	//return json.Unmarshal([]byte(body), output)
-
-	var data map[string]interface{}
-	err = json.Unmarshal(body, &data)
-	if err != nil {
-		log.Fatal(err.Error())
-		return err
-	}
-	structValue := reflect.ValueOf(output).Elem()
-	for _, fieldName := range []string{"Title", "Description", "Id", "Status", "LastUpdated"} {
-		if field, ok := structValue.Type().FieldByName(fieldName); ok && field.Tag != "" {
-			jsonTag := field.Tag.Get("json")
-			if outputValue, ok := data[jsonTag]; ok {
-				outputType := structValue.FieldByName(fieldName).Type()
-				outputValue := reflect.ValueOf(outputValue)
-				if outputValue.Type().ConvertibleTo(outputType) {
-					structValue.FieldByName(fieldName).Set(outputValue.Convert(outputType))
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func UpdateIssue(repo string, Id int, title string, desc string) (GitIssue, error) {
-	gitissue := GitIssue{
-		Title:       title,
-		Description: desc}
-
-	gitissueJson, err := json.Marshal(gitissue)
-	if err != nil {
-		log.Fatal(err.Error())
-		return GitIssue{}, err
-	}
-
-	client := &http.Client{}
-	req, err := http.NewRequest("PATCH", GetUrl(repo)+"/"+fmt.Sprint(Id), bytes.NewBuffer(gitissueJson))
-
-	if err != nil {
-		log.Fatal(err.Error())
-		return GitIssue{}, err
-	}
-
-	req.Header.Add("Accept", "application/json")
-	req.Header.Add("Authorization", "Bearer "+GetToken())
-
-	resp, err := client.Do(req)
-
-	if err != nil {
-		log.Fatal(err.Error())
-		return GitIssue{}, err
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatal(err.Error())
 		return GitIssue{}, err
 	}
 
 	err = json.Unmarshal([]byte(body), &gitissue)
+	return gitissue, err
+}
+
+func (g *GitClient) UpdateIssue(Id int, title string, desc string) (GitIssue, error) {
+	gitissue := GitIssue{
+		Title:       title,
+		Description: desc}
+
+	gitissueJson, err := json.Marshal(gitissue)
+	if err != nil {
+		return GitIssue{}, err
+	}
+
+	client := &http.Client{}
+	req, err := http.NewRequest("PATCH", g.repo+"/"+fmt.Sprint(Id), bytes.NewBuffer(gitissueJson))
+
+	if err != nil {
+		return GitIssue{}, err
+	}
+
+	req.Header.Add("Accept", "application/json")
+	req.Header.Add("Authorization", "Bearer "+g.token)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return GitIssue{}, err
+	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode > 299 {
+		return GitIssue{}, fmt.Errorf("%v", http.StatusText(resp.StatusCode))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return GitIssue{}, err
+	}
+
+	err = json.Unmarshal([]byte(body), &gitissue)
 	return gitissue, err
 }

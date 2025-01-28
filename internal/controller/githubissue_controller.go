@@ -1,5 +1,5 @@
 /*
-Copyright 2024.
+Copyright 2025.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,8 +20,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zszabo-rh/issues-operator/gitclient"
-
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -30,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	trainingv1alpha1 "github.com/zszabo-rh/issues-operator/api/v1alpha1"
+	"github.com/zszabo-rh/issues-operator/gitclient"
 )
 
 // GithubIssueReconciler reconciles a GithubIssue object
@@ -53,7 +52,7 @@ type GithubIssueReconciler struct {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.18.4/pkg/reconcile
 func (r *GithubIssueReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
-	log.Info(">>>>>>>>>>>> Starting reconcile (v6) <<<<<<<<<<<<<<<<<<<<<<<")
+	log.Info("--------- Starting reconcile (v1) --------------")
 
 	githubissue := &trainingv1alpha1.GithubIssue{}
 	err := r.Get(ctx, req.NamespacedName, githubissue)
@@ -71,66 +70,58 @@ func (r *GithubIssueReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	clientissue.Title = githubissue.Spec.Title
 	clientissue.Description = githubissue.Spec.Description
 
-	issues, err := gitclient.GetIssues(repo)
-
+	client, err := gitclient.NewGitClient(repo)
 	if err != nil {
-		log.Error(err, "GetIssues("+gitclient.GetUrl(repo)+") failed")
 		return ctrl.Result{}, err
 	}
 
-	log.Info("Github responded successfully, comparing issues")
+	issues, err := client.GetIssues()
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
 	found := false
 	for _, issue := range issues {
 		if issue.Title == clientissue.Title {
 			log.Info("Match! Updating description")
 			found = true
-			updatedissue, err := gitclient.UpdateIssue(repo, issue.Id, clientissue.Title, clientissue.Description)
+			updatedissue, err := client.UpdateIssue(issue.Id, clientissue.Title, clientissue.Description)
 			if err != nil {
 				log.Error(err, "UpdateIssue("+repo+", "+fmt.Sprintf("%v", clientissue)+") failed")
 				return ctrl.Result{}, err
 			}
 
-			log.Info("Updating spec")
-			err = r.Update(ctx, githubissue)
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-
-			githubissue.Status.State = updatedissue.Status
-			githubissue.Status.LastUpdated = updatedissue.LastUpdated
-
-			log.Info("Updating status: " + githubissue.Status.State + ", " + githubissue.Status.LastUpdated)
-			err = r.Status().Update(ctx, githubissue)
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{}, nil
+			return r.UpdateResource(ctx, githubissue, updatedissue)
 		}
 	}
 
 	if !found {
 		log.Info("No issues matched! Creating new github issue")
-		newissue, err := gitclient.AddIssue(repo, clientissue.Title, clientissue.Description)
+		newissue, err := client.AddIssue(clientissue.Title, clientissue.Description)
 		if err != nil {
 			log.Error(err, "AddIssue("+repo+", "+fmt.Sprintf("%v", clientissue)+") failed")
 			return ctrl.Result{}, err
 		}
-		log.Info("Updating spec")
+		return r.UpdateResource(ctx, githubissue, newissue)
+	}
+	return ctrl.Result{}, nil
+}
 
-		err = r.Update(ctx, githubissue)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
+func (r *GithubIssueReconciler) UpdateResource(ctx context.Context, res *trainingv1alpha1.GithubIssue, issue gitclient.GitIssue) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+	log.Info("Updating spec")
+	err := r.Update(ctx, res)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
-		githubissue.Status.State = newissue.Status
-		githubissue.Status.LastUpdated = newissue.LastUpdated
+	res.Status.State = issue.Status
+	res.Status.LastUpdated = issue.LastUpdated
 
-		log.Info("Updating status: " + githubissue.Status.State + ", " + githubissue.Status.LastUpdated)
-		err = r.Status().Update(ctx, githubissue)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
+	log.Info("Updating status: " + res.Status.State + ", " + res.Status.LastUpdated)
+	err = r.Status().Update(ctx, res)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
 }

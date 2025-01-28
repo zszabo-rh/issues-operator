@@ -1,48 +1,158 @@
-// Assisted by watsonx Code Assistant
-
-package gitclient
+package gitclient_test
 
 import (
-	"testing"
+	"fmt"
+	"os"
+	"time"
 
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/zszabo-rh/issues-operator/gitclient"
 )
 
-func TestGetUrl(t *testing.T) {
-	repo := "git@github.com:zszabo-rh/issues-operator.git"
-	expectedUrl := "https://api.github.com/repos/zszabo-rh/issues-operator/issues"
-	RegisterTestingT(t)
-	Expect(GetUrl(repo)).To(Equal(expectedUrl))
-}
+var _ = Describe("Gitclient", func() {
 
-func TestGetIssues(t *testing.T) {
-	repo := "git@github.com:zszabo-rh/issues-operator.git"
-	RegisterTestingT(t)
-	gitissues, err := GetIssues(repo)
-	Expect(err).To(BeNil())
-	Expect(len(gitissues)).To(BeNumerically(">", 0))
-}
+	var (
+		originalToken string
+		issueId       int
+	)
 
-func TestAddIssue(t *testing.T) {
-	repo := "git@github.com:zszabo-rh/issues-operator.git"
-	title := "Test Issue"
-	desc := "This is a test issue"
-	RegisterTestingT(t)
-	gitissue, err := AddIssue(repo, title, desc)
-	Expect(err).To(BeNil())
-	Expect(gitissue.Title).To(Equal(title))
-	Expect(gitissue.Description).To(Equal(desc))
-}
+	Context("when the environment is properly configured", func() {
+		BeforeEach(func() {
+			originalToken = os.Getenv("GITTOKEN")
+			os.Setenv("GITTOKEN", "abc123")
+		})
 
-func TestUpdateIssue(t *testing.T) {
-	repo := "git@github.com:zszabo-rh/issues-operator.git"
-	title := "Updated Test Issue"
-	desc := "This is an updated test issue"
-	gitissue, err := AddIssue(repo, "Test Issue", "This is a test issue")
-	RegisterTestingT(t)
-	Expect(err).To(BeNil())
-	updatedGitissue, err := UpdateIssue(repo, gitissue.Id, title, desc)
-	Expect(err).To(BeNil())
-	Expect(updatedGitissue.Title).To(Equal(title))
-	Expect(updatedGitissue.Description).To(Equal(desc))
-}
+		AfterEach(func() {
+			if originalToken == "" {
+				os.Unsetenv("GITTOKEN")
+			} else {
+				os.Setenv("GITTOKEN", originalToken)
+			}
+		})
+
+		It("should return the git token", func() {
+			token, err := gitclient.GetToken()
+			Expect(err).ToNot(HaveOccurred())
+			Expect(token).To(Equal("abc123"))
+		})
+	})
+
+	Context("when the environment is not properly configured", func() {
+		BeforeEach(func() {
+			originalToken = os.Getenv("GITTOKEN")
+			os.Unsetenv("GITTOKEN")
+		})
+
+		AfterEach(func() {
+			if originalToken != "" {
+				os.Setenv("GITTOKEN", originalToken)
+			}
+		})
+
+		It("should return an error", func() {
+			token, err := gitclient.GetToken()
+			Expect(err).To(HaveOccurred())
+			Expect(token).To(Equal(""))
+		})
+	})
+
+	Context("when proper input url is provided", func() {
+		It("should return the converted url", func() {
+			url, err := gitclient.BuildUrl("git@github.com:myrepo/myuser.git")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(url).To(Equal("https://api.github.com/repos/myrepo/myuser/issues"))
+		})
+	})
+
+	Context("when wrong input url is provided", func() {
+		It("should return an error", func() {
+			url, err := gitclient.BuildUrl("https://api.github.com/repos/myrepo/myuser/issues")
+			Expect(err).To(HaveOccurred())
+			Expect(url).To(Equal(""))
+		})
+	})
+
+	Context("when proper input url is provided", func() {
+		It("should return the issue list", func() {
+			client, err := gitclient.NewGitClient("git@github.com:zszabo-rh/issues-operator.git")
+			Expect(err).ToNot(HaveOccurred())
+			gitissues, err := client.GetIssues()
+			Expect(err).ToNot(HaveOccurred())
+			Expect(len(gitissues)).To(BeNumerically(">", 0))
+		})
+	})
+
+	Context("when wrong url is provided", func() {
+		It("should return an error", func() {
+			client, err := gitclient.NewGitClient("git@github.com:zszabo/issues-operator.git")
+			Expect(err).ToNot(HaveOccurred())
+			gitissues, err := client.GetIssues()
+			Expect(err).To(Equal(fmt.Errorf("%v", "Not Found")))
+			Expect(gitissues).To(BeNil())
+		})
+	})
+
+	Context("when no token is set", func() {
+		BeforeEach(func() {
+			originalToken = os.Getenv("GITTOKEN")
+			os.Setenv("GITTOKEN", "abc123")
+		})
+
+		AfterEach(func() {
+			if originalToken == "" {
+				os.Unsetenv("GITTOKEN")
+			} else {
+				os.Setenv("GITTOKEN", originalToken)
+			}
+		})
+
+		It("should return an error", func() {
+			client, err := gitclient.NewGitClient("git@github.com:zszabo-rh/issues-operator.git")
+			Expect(err).ToNot(HaveOccurred())
+			gitissues, err := client.GetIssues()
+			Expect(err).To(Equal(fmt.Errorf("%v", "Unauthorized")))
+			Expect(gitissues).To(BeNil())
+		})
+	})
+
+	Context("when new issue title is provided for AddIssue", func() {
+		BeforeEach(func() {
+		})
+
+		It("should create the github issue", func() {
+			client, err := gitclient.NewGitClient("git@github.com:zszabo-rh/issues-operator.git")
+			Expect(err).ToNot(HaveOccurred())
+			issueTitle := fmt.Sprintf("Generated_test_issue_%v", time.Now().Format("2006-01-02T15:04:05Z"))
+			gitissue, err := client.AddIssue(issueTitle, "description")
+			issueId = gitissue.Id
+			Expect(err).ToNot(HaveOccurred())
+			Expect(gitissue.Title).To(Equal(issueTitle))
+		})
+	})
+
+	Context("when existing issue ID is provided for UpdateIssue", func() {
+		It("should update the title and description", func() {
+			client, err := gitclient.NewGitClient("git@github.com:zszabo-rh/issues-operator.git")
+			Expect(err).ToNot(HaveOccurred())
+			issueTitle := fmt.Sprintf("Generated_test_issue_%v", time.Now().Format("2006-01-02T15:04:05Z"))
+			gitissue, err := client.UpdateIssue(issueId, issueTitle, "new description")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(gitissue.Title).To(Equal(issueTitle))
+			Expect(gitissue.Description).To(Equal("new description"))
+		})
+	})
+
+	Context("when non-existing issue ID is provided for UpdateIssue", func() {
+		It("should return an error", func() {
+			client, err := gitclient.NewGitClient("git@github.com:zszabo-rh/issues-operator.git")
+			Expect(err).ToNot(HaveOccurred())
+			issueTitle := fmt.Sprintf("Generated_test_issue_%v", time.Now().Format("2006-01-02T15:04:05Z"))
+			gitissue, err := client.UpdateIssue(999, issueTitle, "new description")
+			Expect(err).To(Equal(fmt.Errorf("%v", "Not Found")))
+			Expect(gitissue.Title).To(Equal(""))
+		})
+	})
+
+})
